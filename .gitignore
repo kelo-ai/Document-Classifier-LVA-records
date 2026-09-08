@@ -1,0 +1,30 @@
+# Dependencies
+node_modules/
+
+# Environment variables — contains real credentials, never commit this
+.env
+.env.local
+
+# Generated/runtime data
+gs-schedule/data/
+uploads/
+volumes/
+
+# OCR language data (large file, downloaded automatically on first run)
+eng.traineddata
+
+# Logs
+*.log
+npm-debug.log*
+
+# OS files
+.DS_Store
+Thumbs.db
+
+# Editor files
+.vscode/
+.idea/
+*.swp
+Test_Documents/ 
+GS 03+16/ 
+Gs02pdfFiles/ 
