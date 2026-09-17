@@ -50,7 +50,7 @@ async function pdfHasSubstantialText(buffer, minChars = 100) {
     return false; // if raw pdfjs itself can't read it, treat as no usable text
   }
 }
-const { startTimingSession } = require('./perfLogger');
+const { startTimingSession, getRecentLogs } = require('./perfLogger');
 const { isGsScheduleDocument, extractScheduleNumber } = require('./gs-schedule/gsScheduleParser');
 const { extractGsScheduleTable } = require('./gs-schedule/gsScheduleTableExtractor');
 const { extractGsScheduleTableViaOcr } = require('./gs-schedule/gsScheduleOcrTableExtractor');
@@ -432,6 +432,18 @@ app.get('/extract/:fileId', async (req, res) => {
  * Lists all objects in the S3 bucket, enriched with per-file metadata
  * (fileId, original name, uploadedAt) for the dashboard.
  */
+/**
+ * GET /perf-logs
+ * Returns recent timing data (upload, search, classification) for the
+ * dashboard's live timing log — most recent first. Durations are in
+ * milliseconds here (matching how they're measured internally); the
+ * frontend converts to seconds for display.
+ */
+app.get('/perf-logs', (req, res) => {
+  const logs = getRecentLogs();
+  return res.json({ success: true, logs });
+});
+
 app.get('/files', async (req, res) => {
   try {
     const listData = await s3Client.send(new ListObjectsV2Command({ Bucket: BUCKET_NAME }));

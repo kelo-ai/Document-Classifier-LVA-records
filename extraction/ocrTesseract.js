@@ -128,7 +128,7 @@ function extractWordsFromTesseractData(data) {
  * Returns both plain text and word-level bounding boxes (used for
  * table reconstruction in high-quality mode).
  */
-async function ocrImage(imageBuffer) {
+async function ocrImage(imageBuffer, needsWordData = true) {
   const worker = await getWorker();
   // Tesseract.js 5.1+ disables every output format except plain text by
   // default (a performance change) — block/word-level data (needed here
@@ -137,12 +137,19 @@ async function ocrImage(imageBuffer) {
   // works perfectly. Confirmed directly: without this, OCR text
   // recognition succeeded completely but word coordinates were silently
   // never generated at all, not just misplaced in the result shape.
+  //
+  // needsWordData=false skips this entirely — requesting block-level
+  // layout analysis is real extra work for Tesseract, and low-quality
+  // mode never reads the words result at all (only 'high' quality's
+  // table-reconstruction step uses it), so that cost was being paid and
+  // then silently discarded on every low-quality OCR call.
+  const outputOptions = needsWordData ? { text: true, blocks: true } : { text: true };
   const { data } = await withTimeout(
-    worker.recognize(imageBuffer, {}, { text: true, blocks: true }),
+    worker.recognize(imageBuffer, {}, outputOptions),
     OCR_TIMEOUT_MS,
     'OCR recognition'
   );
-  const rawWords = extractWordsFromTesseractData(data);
+  const rawWords = needsWordData ? extractWordsFromTesseractData(data) : [];
   return {
     text: data.text,
     words: rawWords.map((w) => ({
@@ -232,14 +239,20 @@ function classifyOcrError(err) {
 async function extractWithTesseract(buffer, quality) {
   const startTime = performance.now();
   try {
-    const scale = quality === 'high' ? 3.0 : 1.5;
+    // Scale 3.0 was excessive for what this actually needs — a standard
+    // page at that scale renders to ~2550x3300px (~8.4 million pixels),
+    // which is directly, proportionally slower for Tesseract to process.
+    // 2.0 still renders meaningfully sharper than low quality's 1.5 (real
+    // benefit for table-column accuracy) while cutting total pixel count
+    // by more than half ((3.0/2.0)^2 = 2.25x fewer pixels).
+    const scale = quality === 'high' ? 2.0 : 1.5;
     const images = await renderPdfToImages(buffer, scale);
 
     let combinedText = '';
     let tableCount = 0;
 
     for (const image of images) {
-      const { text, words } = await ocrImage(image);
+      const { text, words } = await ocrImage(image, quality === 'high'); // only request word-level data when it'll actually be used below
 
       // Plain OCR text is always kept — this preserves the natural
       // line-by-line structure that downstream document-specific parsers

@@ -7,6 +7,28 @@
 
 const { performance } = require('perf_hooks');
 
+// Shared in-memory log — every completed timing session gets pushed here,
+// so the dashboard can show a live history of recent operations, not just
+// what's visible in the server's own console. Capped so it doesn't grow
+// unbounded over a long-running server; only the most recent entries
+// matter for a live timing view.
+const MAX_LOG_ENTRIES = 100;
+const recentLogs = [];
+
+function pushToLog(entry) {
+  recentLogs.push(entry);
+  if (recentLogs.length > MAX_LOG_ENTRIES) {
+    recentLogs.shift(); // drop the oldest
+  }
+}
+
+/**
+ * Returns recent timing log entries, most recent first.
+ */
+function getRecentLogs(limit = MAX_LOG_ENTRIES) {
+  return recentLogs.slice(-limit).reverse();
+}
+
 /**
  * Creates a new timing session for one request (one upload, one search,
  * one classification). Call .step() around each stage, then .summary()
@@ -52,10 +74,11 @@ function startTimingSession(label) {
     const s = summary();
     const breakdown = s.steps.map((st) => `${st.step}=${st.durationMs}ms${st.success ? '' : ' (FAILED)'}`).join(', ');
     console.log(`[perf] ${s.label}: total=${s.totalMs}ms | ${breakdown}`);
+    pushToLog({ ...s, timestamp: new Date().toISOString() });
     return s;
   }
 
   return { step, record, summary, logSummary };
 }
 
-module.exports = { startTimingSession };
+module.exports = { startTimingSession, getRecentLogs };

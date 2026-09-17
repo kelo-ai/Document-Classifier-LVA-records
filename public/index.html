@@ -3,8 +3,8 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<link rel="icon" href="/favicon.png">
 <title>AI Document Intelligence</title>
+<link rel="icon" href="/favicon.png">
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
 <link href="https://fonts.googleapis.com/css2?family=Plus+Jakarta+Sans:wght@400;500;600;700;800&family=Inter:wght@400;500;600&family=JetBrains+Mono:wght@400;500;600&display=swap" rel="stylesheet">
@@ -776,6 +776,7 @@
           </div>
         </form>
         <div id="result"></div>
+        <div id="quickClassifyAction"></div>
       </div>
     </div>
   </section>
@@ -824,6 +825,31 @@
                 <th>Extraction</th>
                 <th>Location</th>
                 <th>Actions</th>
+              </tr>
+            </thead>
+            <tbody></tbody>
+          </table>
+        </div>
+      </div>
+    </div>
+  </section>
+
+  <section class="block">
+    <div class="wrap">
+      <div class="section-title">
+        <h2>Timing log</h2>
+        <span class="tag" id="perfLogCountTag">0 entries</span>
+        <button type="button" class="btn" style="margin-left:auto;" onclick="loadPerfLogs()">Refresh</button>
+      </div>
+      <div class="panel">
+        <div class="table-wrap">
+          <table id="perfLogTable">
+            <thead>
+              <tr>
+                <th>Time</th>
+                <th>Operation</th>
+                <th>Total (s)</th>
+                <th>Breakdown</th>
               </tr>
             </thead>
             <tbody></tbody>
@@ -1081,6 +1107,7 @@ document.getElementById('uploadForm').addEventListener('submit', async (e) => {
   formData.append('quality', document.getElementById('qualitySelect').value);
 
   setResult('Uploading…', 'neutral');
+  document.getElementById('quickClassifyAction').innerHTML = '';
   uploadBtn.disabled = true;
   setPipelineRunning();
 
@@ -1103,16 +1130,46 @@ document.getElementById('uploadForm').addEventListener('submit', async (e) => {
         }
       }
       setResult(msg, tone);
+
+      // Automatically classify — but ONLY for regular documents, not for
+      // GS schedules themselves. data.gsSchedule is non-null when the
+      // uploaded file WAS detected and parsed as a GS schedule (e.g.
+      // GS-02.pdf) — classifying a schedule against other schedules
+      // doesn't make sense, so that case just shows a manual "Classify"
+      // button instead (useful mainly as a fallback, e.g. re-running
+      // after a metadata fix), rather than auto-firing a live Groq call
+      // on every schedule upload.
+      const quickClassify = document.getElementById('quickClassifyAction');
+      const isGsScheduleUpload = !!data.gsSchedule;
+
+      if (data.fileId && !isGsScheduleUpload) {
+        const uploadedName = fileInput.files[0].name;
+        quickClassify.innerHTML = '';
+        classifyFile(data.fileId, uploadedName); // auto-run, no click needed — shows its own loading state and scrolls into view
+      } else if (data.fileId) {
+        const safeName = String(fileInput.files[0].name).replace(/"/g, '&quot;');
+        quickClassify.innerHTML = `
+          <button class="btn btn-primary" data-action="classify" data-fileid="${data.fileId}" data-name="${safeName}" style="margin-top:10px;">
+            Classify this document
+          </button>
+        `;
+      } else {
+        quickClassify.innerHTML = '';
+      }
+
       fileInput.value = '';
       showPreview(null);
       loadFiles();
+      loadPerfLogs();
     } else {
       setPipelineComplete(false);
       setResult(data.message, 'bad');
+      document.getElementById('quickClassifyAction').innerHTML = '';
     }
   } catch (err) {
     setPipelineComplete(false);
     setResult('Upload failed: could not reach the server.', 'bad');
+    document.getElementById('quickClassifyAction').innerHTML = '';
   } finally {
     uploadBtn.disabled = false;
   }
@@ -1124,6 +1181,7 @@ document.getElementById('cancelBtn').addEventListener('click', () => {
   const resultDiv = document.getElementById('result');
   resultDiv.classList.remove('show');
   resultDiv.textContent = '';
+  document.getElementById('quickClassifyAction').innerHTML = '';
   resetPipeline();
 });
 
@@ -1148,6 +1206,7 @@ async function classifyFile(fileId, originalName) {
         <p style="color:var(--danger); font-size:13px;"><strong>Classification failed:</strong> ${data.error || data.message || 'Unknown error'}</p>
         ${data.candidates ? renderCandidateList(data.candidates, null) : ''}
       `;
+      loadPerfLogs();
       return;
     }
 
@@ -1179,9 +1238,11 @@ async function classifyFile(fileId, originalName) {
       ${renderCandidateList(data.candidatesConsidered, r.seriesNumber)}
     `;
     animateRings(content);
+    loadPerfLogs();
   } catch (err) {
     setPipelineComplete(false);
     content.innerHTML = '<p style="color:var(--danger); font-size:13px;">Classification failed: could not reach the server.</p>';
+    loadPerfLogs();
   }
 }
 
@@ -1304,8 +1365,8 @@ async function runGsSearch() {
     const res = await fetch('/search-gs?q=' + encodeURIComponent(query));
     const data = await res.json();
 
-    if (!data.success) { resultsDiv.textContent = data.message || data.error || 'Search failed.'; return; }
-    if (!data.results.length) { resultsDiv.textContent = 'No matching GS records found. (Has a GS schedule been uploaded yet?)'; return; }
+    if (!data.success) { resultsDiv.textContent = data.message || data.error || 'Search failed.'; loadPerfLogs(); return; }
+    if (!data.results.length) { resultsDiv.textContent = 'No matching GS records found. (Has a GS schedule been uploaded yet?)'; loadPerfLogs(); return; }
 
     const cards = data.results.map(r => {
       const pct = Math.max(0, Math.min(100, Math.round(r.similarityScore * 100)));
@@ -1324,8 +1385,10 @@ async function runGsSearch() {
     }).join('');
 
     resultsDiv.innerHTML = `${renderConfidenceBadge(data.retrievalConfidence)}${renderIntraContextBadge(data.intraContextSimilarity)}${cards}`;
+    loadPerfLogs();
   } catch (err) {
     resultsDiv.textContent = 'Search failed: could not reach the server.';
+    loadPerfLogs();
   }
 }
 
@@ -1431,6 +1494,12 @@ document.querySelector('#fileTable tbody').addEventListener('click', (e) => {
   if (action === 'delete') deleteFile(btn.dataset.key);
 });
 
+document.getElementById('quickClassifyAction').addEventListener('click', (e) => {
+  const btn = e.target.closest('[data-action="classify"]');
+  if (!btn) return;
+  classifyFile(btn.dataset.fileid, btn.dataset.name);
+});
+
 function downloadFile(key) {
   window.location.href = '/download/' + encodeURIComponent(key);
 }
@@ -1487,7 +1556,44 @@ async function deleteFile(key) {
   }
 }
 
+/* ============ timing log ============ */
+async function loadPerfLogs() {
+  const tbody = document.querySelector('#perfLogTable tbody');
+  const countTag = document.getElementById('perfLogCountTag');
+  try {
+    const res = await fetch('/perf-logs');
+    const data = await res.json();
+
+    if (!data.success || !data.logs.length) {
+      tbody.innerHTML = '<tr><td colspan="4" style="color:var(--muted);">No timing data yet — upload, search, or classify something.</td></tr>';
+      countTag.textContent = '0 entries';
+      return;
+    }
+
+    countTag.textContent = data.logs.length + ' entries';
+    tbody.innerHTML = '';
+    data.logs.forEach(log => {
+      const time = new Date(log.timestamp).toLocaleTimeString();
+      const totalSec = (log.totalMs / 1000).toFixed(2);
+      const breakdown = log.steps
+        .map(s => s.step + '=' + (s.durationMs / 1000).toFixed(2) + 's' + (s.success ? '' : ' (failed)'))
+        .join(', ');
+      const tr = document.createElement('tr');
+      tr.innerHTML = `
+        <td class="mono" style="white-space:nowrap;">${time}</td>
+        <td class="mono">${log.label}</td>
+        <td class="mono">${totalSec}s</td>
+        <td class="mono" style="font-size:11px; color:var(--muted);">${breakdown}</td>
+      `;
+      tbody.appendChild(tr);
+    });
+  } catch (err) {
+    tbody.innerHTML = '<tr><td colspan="4" style="color:var(--muted);">Could not load timing log — check server connection.</td></tr>';
+  }
+}
+
 loadFiles();
+loadPerfLogs();
 </script>
 </body>
 </html>
